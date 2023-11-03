@@ -2,7 +2,6 @@ const fs = require("node:fs/promises");
 const { join } = require("node:path");
 const PackageJson = require("@npmcli/package-json");
 const { Command } = require("commander");
-const execa = require("execa");
 const inquirer = require("inquirer");
 
 const foldersToExclude = [".github"];
@@ -31,18 +30,25 @@ async function copyTemplateFiles({ files, rootDirectory }) {
   }
 }
 
+const removeUnusedDependencies = (dependencies, unusedDependencies) =>
+  Object.fromEntries(
+    Object.entries(dependencies).filter(
+      ([key]) => !unusedDependencies.includes(key)
+    )
+  );
+
 async function updatePackageJsonForEdge(directory) {
   const packageJson = await PackageJson.load(directory);
   const { dependencies, scripts, ...restOfPackageJson } = packageJson.content;
 
   packageJson.update({
     ...restOfPackageJson,
-    dependencies: {
-      ...dependencies,
-      "@netlify/edge-functions": "^2.0.0",
-      "@netlify/remix-edge-adapter": "^3.0.0",
-      "@netlify/remix-runtime": "^2.0.0",
-    },
+    dependencies: removeUnusedDependencies(dependencies, [
+      "@netlify/functions",
+      "@netlify/remix-adapter",
+      "shx",
+      "source-map-support",
+    ]),
     // dev script is the same as the start script for Netlify Edge, "cross-env NODE_ENV=production netlify dev"
     scripts: {
       ...scripts,
@@ -59,13 +65,11 @@ async function updatePackageJsonForFunctions(directory) {
 
   packageJson.update({
     ...restOfPackageJson,
-    dependencies: {
-      ...dependencies,
-      "@netlify/functions": "^2.0.0",
-      "@netlify/remix-adapter": "^2.0.0",
-      "source-map-support": "^0.5.21",
-      shx: "^0.3.4",
-    },
+    dependencies: removeUnusedDependencies(dependencies, [
+      "@netlify/edge-functions",
+      "@netlify/remix-edge-adapter",
+      "@netlify/remix-runtime",
+    ]),
     scripts: {
       ...scripts,
       build: "npm run redirects:enable && remix build",
@@ -94,23 +98,6 @@ async function removeNonTemplateFiles({ rootDirectory, folders }) {
   }
 }
 
-async function installAdditionalDependencies({
-  rootDirectory,
-  packageManager,
-}) {
-  try {
-    console.log(`Installing additional dependencies with ${packageManager}.`);
-    await execa(packageManager, ["install"], {
-      cwd: rootDirectory,
-      stdio: "inherit",
-    });
-  } catch (e) {
-    console.log(
-      `Unable to install additional packages. Run ${packageManager} install in the root of the new project, "${rootDirectory}".`
-    );
-  }
-}
-
 async function main({ rootDirectory, packageManager }) {
   await removeNonTemplateFiles({
     rootDirectory,
@@ -123,7 +110,6 @@ async function main({ rootDirectory, packageManager }) {
       rootDirectory,
     });
     await updatePackageJsonForFunctions(rootDirectory);
-    await installAdditionalDependencies({ rootDirectory, packageManager });
     return;
   }
 
@@ -133,8 +119,6 @@ async function main({ rootDirectory, packageManager }) {
   ]);
 
   await updatePackageJsonForEdge(rootDirectory);
-
-  await installAdditionalDependencies({ rootDirectory, packageManager });
 }
 
 async function shouldUseEdge() {
